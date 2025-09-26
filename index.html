@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Weather Briefer</title>
+</head>
+<body>
+    <h1>AI Weather Briefer</h1>
+    <textarea id="icao-codes" rows="4" cols="50" placeholder="Enter ICAO codes, comma-separated (e.g., VABB, VOMM, VOBL)"></textarea>
+    <br>
+    <label for="pilot-profile">Select Pilot Profile:</label>
+    <select id="pilot-profile">
+        <option value="VFR">VFR</option>
+        <option value="IFR">IFR</option>
+    </select>
+    <br>
+    <button id="submit-btn" onclick="getSummary()">Get Summary</button>
+    
+    <h2>Weather Brief:</h2>
+    <div id="summary-output"></div>
+
+    <script>
+        async function getSummary() {
+            const btn = document.getElementById('submit-btn');
+            const icaoInput = document.getElementById('icao-codes');
+            const pilotProfile = document.getElementById('pilot-profile').value;
+            const output = document.getElementById('summary-output');
+
+            let icaoCodes = (icaoInput.value || '').trim();
+            if (!icaoCodes) {
+                output.innerText = 'Please enter at least one ICAO code (e.g., VABB).';
+                return;
+            }
+
+            // Basic normalize input: remove duplicate commas/spaces
+            icaoCodes = icaoCodes
+                .split(',')
+                .map(c => c.trim().toUpperCase())
+                .filter(Boolean)
+                .join(',');
+
+            btn.disabled = true;
+            output.innerText = 'Fetching METARs, TAFs & SIGMETs and generating summary...';
+
+            try {
+                const response = await fetch('/summarize', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        icao_codes: icaoCodes,
+                        pilot_profile: pilotProfile
+                    })
+                });
+
+                const result = await response.json();
+                if (!response.ok) {
+                    const msg = result && result.error ? result.error : 'Request failed.';
+                    output.innerText = 'Error: ' + msg;
+                    return;
+                }
+
+                output.innerHTML = result.summary || '<em>No summary returned.</em>';
+            } catch (err) {
+                output.innerText = 'Network error: ' + (err && err.message ? err.message : err);
+            } finally {
+                btn.disabled = false;
+            }
+        }
+    </script>
+</body>
+</html>

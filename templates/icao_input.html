@@ -1,0 +1,24 @@
+{% extends 'base.html' %}
+{% block title %}ApacheAI Flight Brief Summary{% endblock %}
+{% block content %}
+  <header class="page-header">
+    <h1>ApacheAI Flight Brief Summary</h1>
+  </header>
+  <form class="card" action="/icao" method="POST">
+    <label for="text" class="sr-only">Enter 4-letter ICAO codes (space or comma separated)</label>
+    <input id="text" name="text" type="text" class="big-input" placeholder="e.g., VABB VOMM VOBL" required />
+    <div style="display:flex; align-items:center; gap:12px; margin-top:12px;">
+      <label for="pilot_profile" style="color:#9ef58e;">Pilot Profile:</label>
+      <select id="pilot_profile" name="pilot_profile" style="background:rgba(255,255,255,0.03); color:#a1f2a5; border:1px solid rgba(255,255,255,0.1); border-radius:10px; padding:8px 10px;">
+        <option value="VFR">VFR</option>
+        <option value="IFR">IFR</option>
+      </select>
+    </div>
+    <div style="margin-top:12px;">
+      <button class="btn" type="submit">Generate Summary</button>
+    </div>
+    {% if error %}
+      <p class="error">{{ error }}</p>
+    {% endif %}
+  </form>
+{% endblock %}

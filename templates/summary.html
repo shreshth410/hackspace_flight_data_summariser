@@ -1,0 +1,169 @@
+{% extends 'base.html' %}
+{% block title %}Weather Summary{% endblock %}
+{% block content %}
+  <header class="page-header">
+    <a href="/icao" class="back-link">← Back</a>
+    <h1>Weather Summary</h1>
+    <div class="codes">For: {{ ", ".join(icao_codes) }}</div>
+  </header>
+  <style>
+    /* Split layout: left text, right map */
+    .split-wrap{ display:grid; grid-template-columns: 1fr 1fr; gap:14px; align-items:start; }
+    @media (max-width: 900px){ .split-wrap{ grid-template-columns: 1fr; } }
+    #map{ width:100%; min-height:520px; border-radius:18px; border:1px solid rgba(57,255,20,0.18); overflow:hidden; }
+    .leaflet-container{ background:#000; }
+  </style>
+
+  <div class="split-wrap">
+    <div>
+      <div id="summary-output" class="card rich">
+        {{ summary_html | safe }}
+      </div>
+      <!-- Hidden data source for ICAO list to avoid embedding Jinja directly in JS -->
+      <div id="icao-data" data-icaos="{{ ",".join(icao_codes) }}" style="display:none;"></div>
+    </div>
+    <div>
+      <div id="map"></div>
+    </div>
+  </div>
+
+  <script>
+    (function() {
+      const output = document.getElementById('summary-output');
+      if (!output) return;
+
+      // If the model already delivered organized sections, split them
+      const temp = document.createElement('div');
+      temp.innerHTML = output.innerHTML;
+
+      const summary = temp.querySelector('#summary');
+      const recs = temp.querySelector('#recommendations');
+      let perAirport = temp.querySelector('#per-airport');
+      if (!perAirport) {
+        // Fallback: find a section whose header mentions Per-Airport
+        perAirport = Array.from(temp.querySelectorAll('section')).find(sec => {
+          const hdr = sec.querySelector('h1, h2, h3, h4');
+          return hdr && /per\s*-?\s*airport/i.test((hdr.textContent || '').trim());
+        }) || null;
+      }
+
+      // Collect remaining nodes as extras
+      const extras = document.createElement('div');
+      extras.style.display = 'none';
+
+      if (perAirport) {
+        // Move the per-airport section into extras
+        extras.appendChild(perAirport);
+      } else {
+        // Fallback: hide anything except summary and recommendations
+        Array.from(temp.children).forEach(node => {
+          if (!node) return;
+          if (node === summary || node === recs) return;
+          extras.appendChild(node);
+        });
+      }
+
+      // Rebuild the visible area
+      output.innerHTML = '';
+      if (summary) output.appendChild(summary);
+      if (recs) output.appendChild(recs);
+
+      // Add toggle if we have extras
+      if (extras.childElementCount > 0) {
+        const btn = document.createElement('button');
+        btn.className = 'btn';
+        btn.textContent = 'Read more';
+        btn.style.margin = '10px 0';
+        btn.onclick = () => {
+          const isHidden = extras.style.display === 'none';
+          extras.style.display = isHidden ? '' : 'none';
+          btn.textContent = isHidden ? 'Show less' : 'Read more';
+        };
+        output.appendChild(btn);
+
+        // Wrap extras in a card for consistent styling
+        const extrasCard = document.createElement('div');
+        extrasCard.className = 'card rich';
+        extrasCard.style.marginTop = '0px';
+        if (perAirport) {
+          const hdr = document.createElement('h2');
+          extrasCard.appendChild(hdr);
+        }
+        extrasCard.appendChild(extras);
+        output.appendChild(extrasCard);
+      }
+    })();
+  </script>
+
+  <!-- Leaflet for map -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script>
+    (async function(){
+      const mapEl = document.getElementById('map');
+      if (!mapEl) return;
+      // Init map centered roughly over India; will fit bounds later
+      const map = L.map('map', { zoomControl: true });
+      // Dark tiles (CartoDB Dark Matter)
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        attribution: '&copy; OpenStreetMap &copy; CartoDB',
+        subdomains: 'abcd',
+        maxZoom: 19
+      }).addTo(map);
+
+      // Get ICAO order from a hidden data attribute (prevents Jinja-in-JS lint issues)
+      const dataEl = document.getElementById('icao-data');
+      const icaos = ((dataEl && dataEl.dataset && dataEl.dataset.icaos) ? dataEl.dataset.icaos : '')
+        .split(',')
+        .map(function(s){ return s.trim().toUpperCase(); })
+        .filter(function(s){ return !!s; });
+      try {
+        const res = await fetch('/api/coords', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ icao_codes: icaos })
+        });
+        const data = await res.json();
+        console.log('ICAOs requested:', icaos);
+        console.log('Coords response:', data);
+        const pts = (data.coords || []).filter(p => typeof p.lat === 'number' && typeof p.lon === 'number');
+        if (pts.length < 2) {
+          // No coords; center world
+          map.setView([20.5937, 78.9629], 4);
+          const note = document.createElement('div');
+          note.textContent = 'Route not available: missing coordinates for one or more ICAO codes.';
+          note.style.color = '#a9f5ba';
+          note.style.marginTop = '8px';
+          document.getElementById('map').after(note);
+          return;
+        }
+
+        // Neon polyline: draw a soft glow underlay + bright overlay
+        const latlngs = pts.map(p => [p.lat, p.lon]);
+        L.polyline(latlngs, { color: '#39ff14', weight: 10, opacity: 0.25 }).addTo(map);
+        L.polyline(latlngs, { color: '#39ff14', weight: 4, opacity: 0.95 }).addTo(map);
+
+        // Destination symbols (markers) with neon style
+        pts.forEach((p, idx) => {
+          const isStart = idx === 0;
+          const isEnd = idx === pts.length - 1;
+          const label = `${p.icao}${p.name ? ' - ' + p.name : ''}`;
+          const marker = L.circleMarker([p.lat, p.lon], {
+            radius: isStart || isEnd ? 7 : 5,
+            color: '#39ff14',
+            weight: 2,
+            fillColor: '#39ff14',
+            fillOpacity: 0.2
+          }).addTo(map);
+          marker.bindPopup(`<strong>${label}</strong>`);
+        });
+
+        map.fitBounds(L.latLngBounds(latlngs), { padding: [20,20] });
+      } catch (e) {
+        console.error('Map error:', e);
+        // fail silently on map
+        map.setView([20.5937, 78.9629], 4);
+      }
+    })();
+  </script>
+{% endblock %}

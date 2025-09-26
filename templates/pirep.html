@@ -1,0 +1,15 @@
+{% extends 'base.html' %}
+{% block title %}PIREP Reporter{% endblock %}
+{% block content %}
+  <header class="page-header">
+    <a href="/pirep" class="back-link">← Back</a>
+    <h1>PIREP Reporter</h1>
+  </header>
+  <div class="card">
+    {% if error %}
+      <p class="error">{{ error }}</p>
+    {% else %}
+      <p class="mono big">{{ pirep_text }}</p>
+    {% endif %}
+  </div>
+{% endblock %}
