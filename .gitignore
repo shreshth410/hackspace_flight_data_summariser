@@ -9,4 +9,8 @@ venv/
 .env
 
 # VSCode
+<<<<<<< HEAD
 .vscode/
+=======
+.vscode/
+>>>>>>> 6728a85297695b604c7407002ecf7d6e85c38b82
