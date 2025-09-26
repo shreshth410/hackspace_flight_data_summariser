@@ -98,12 +98,14 @@
   <!-- Leaflet for map -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <!-- Geodesic plugin for great-circle routes -->
+  <script src="https://cdn.jsdelivr.net/npm/leaflet.geodesic/leaflet.geodesic.min.js"></script>
   <script>
     (async function(){
       const mapEl = document.getElementById('map');
       if (!mapEl) return;
       // Init map centered roughly over India; will fit bounds later
-      const map = L.map('map', { zoomControl: true });
+      const map = L.map('map', { zoomControl: true, worldCopyJump: true });
       // Dark tiles (CartoDB Dark Matter)
       L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
         attribution: '&copy; OpenStreetMap &copy; CartoDB',
@@ -126,22 +128,121 @@
         const data = await res.json();
         console.log('ICAOs requested:', icaos);
         console.log('Coords response:', data);
-        const pts = (data.coords || []).filter(p => typeof p.lat === 'number' && typeof p.lon === 'number');
+        let pts = (data.coords || []).filter(p => typeof p.lat === 'number' && typeof p.lon === 'number');
         if (pts.length < 2) {
-          // No coords; center world
-          map.setView([20.5937, 78.9629], 4);
-          const note = document.createElement('div');
-          note.textContent = 'Route not available: missing coordinates for one or more ICAO codes.';
-          note.style.color = '#a9f5ba';
-          note.style.marginTop = '8px';
-          document.getElementById('map').after(note);
-          return;
+          // Client-side fallback: try Nominatim for any missing ICAOs to ensure we can draw a line
+          const have = new Set(pts.map(p => (p.icao || '').toUpperCase()));
+          const missing = icaos.filter(c => !have.has(c));
+          const fetched = [];
+          for (const c of missing) {
+            try {
+              const url = `https://nominatim.openstreetmap.org/search?format=json&q=airport%20${encodeURIComponent(c)}&limit=1`;
+              const r = await fetch(url, { headers: { 'Accept': 'application/json' } });
+              const arr = await r.json();
+              if (Array.isArray(arr) && arr.length > 0) {
+                const lat = parseFloat(arr[0].lat), lon = parseFloat(arr[0].lon);
+                if (Number.isFinite(lat) && Number.isFinite(lon)) {
+                  fetched.push({ icao: c, name: '', lat, lon });
+                }
+              }
+            } catch (e) {
+            }
+          }
+          if (fetched.length > 0) {
+            pts = pts.concat(fetched).filter(p => typeof p.lat === 'number' && typeof p.lon === 'number');
+          }
         }
 
-        // Neon polyline: draw a soft glow underlay + bright overlay
-        const latlngs = pts.map(p => [p.lat, p.lon]);
-        L.polyline(latlngs, { color: '#39ff14', weight: 10, opacity: 0.25 }).addTo(map);
-        L.polyline(latlngs, { color: '#39ff14', weight: 4, opacity: 0.95 }).addTo(map);
+        // Rebuild points strictly in the original ICAO order to avoid zig-zag or broken multi-leg routes
+        if (pts.length >= 2) {
+          const byIcao = new Map(pts.map(p => [(p.icao || '').toUpperCase(), p]));
+          const ordered = [];
+          for (const code of icaos) {
+            const p = byIcao.get(code);
+            if (p) ordered.push(p);
+          }
+          if (ordered.length >= 2) {
+            pts = ordered;
+          } else {
+            // Still not enough to draw
+            map.setView([20.5937, 78.9629], 4);
+            const note = document.createElement('div');
+            note.textContent = 'Route not available: missing coordinates for one or more ICAO codes.';
+            note.style.color = '#a9f5ba';
+            note.style.marginTop = '8px';
+            document.getElementById('map').after(note);
+            return;
+          }
+        }
+
+        // Route coordinates
+        const latlngs = pts.map(function(p){ return [p.lat, p.lon]; });
+
+        // Prefer neon green geodesic trajectory (great-circle) with glow
+        let drew = false;
+        try {
+          if (window.L && L.geodesic) {
+            // Build per-leg segments with anti-meridian-unwrapped longitudes
+            function unwrapLngPair(a, b){
+              const [lat1, lon1] = a; const [lat2, lon2] = b;
+              let adjLon2 = lon2;
+              let diff = adjLon2 - lon1;
+              if (diff > 180) adjLon2 -= 360;
+              if (diff < -180) adjLon2 += 360;
+              return [[lat1, lon1], [lat2, adjLon2]];
+            }
+            const segments = [];
+            for (let i = 0; i < latlngs.length - 1; i++) {
+              const [p1, p2] = unwrapLngPair(latlngs[i], latlngs[i+1]);
+              segments.push([p1, p2]);
+            }
+            // Use wrap:false to avoid slicing at the anti-meridian
+            L.geodesic(segments, { color: '#39ff14', weight: 10, opacity: 0.22, steps: 128, wrap: false }).addTo(map);
+            L.geodesic(segments, { color: '#39ff14', weight: 4, opacity: 0.98, steps: 128, wrap: false }).addTo(map);
+            drew = true;
+          }
+        } catch (ge) { console.warn('Geodesic draw failed, falling back to straight polylines.', ge); }
+
+        if (!drew) {
+          // Fallback: approximate great-circle using manual interpolation per leg
+          function toRad(x){ return x * Math.PI / 180; }
+          function toDeg(x){ return x * 180 / Math.PI; }
+          function slerpGreatCircle(a, b, steps){
+            const [lat1, lon1] = a.map(toRad);
+            const [lat2, lon2] = b.map(toRad);
+            const d = 2 * Math.asin(Math.sqrt(Math.sin((lat2-lat1)/2)**2 + Math.cos(lat1)*Math.cos(lat2)*Math.sin((lon2-lon1)/2)**2));
+            if (!isFinite(d) || d === 0){ return [a, b]; }
+            const out = [];
+            let prevLonDeg = null;
+            for (let i=0;i<=steps;i++){
+              const f = i/steps;
+              const A = Math.sin((1-f)*d) / Math.sin(d);
+              const B = Math.sin(f*d) / Math.sin(d);
+              const x = A*Math.cos(lat1)*Math.cos(lon1) + B*Math.cos(lat2)*Math.cos(lon2);
+              const y = A*Math.cos(lat1)*Math.sin(lon1) + B*Math.cos(lat2)*Math.sin(lon2);
+              const z = A*Math.sin(lat1) + B*Math.sin(lat2);
+              const lat = Math.atan2(z, Math.sqrt(x*x + y*y));
+              let lon = Math.atan2(y, x);
+              let lonDeg = toDeg(lon);
+              if (prevLonDeg !== null){
+                let diff = lonDeg - prevLonDeg;
+                if (diff > 180) lonDeg -= 360;
+                if (diff < -180) lonDeg += 360;
+              }
+              prevLonDeg = lonDeg;
+              out.push([toDeg(lat), lonDeg]);
+            }
+            return out;
+          }
+          let dense = [];
+          for (let i=0; i<latlngs.length-1; i++){
+            const seg = slerpGreatCircle(latlngs[i], latlngs[i+1], 64);
+            if (i>0) seg.shift(); // avoid duplicate point at joins
+            dense = dense.concat(seg);
+          }
+          L.polyline(dense, { color: '#39ff14', weight: 10, opacity: 0.22 }).addTo(map);
+          L.polyline(dense, { color: '#39ff14', weight: 4, opacity: 0.98 }).addTo(map);
+        }
 
         // Destination symbols (markers) with neon style
         pts.forEach((p, idx) => {
