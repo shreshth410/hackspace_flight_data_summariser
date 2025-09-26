@@ -5,11 +5,34 @@
     <h1>PIREP Reporter</h1>
   </header>
   <form class="card" action="/pirep" method="POST">
-    <label for="text" class="sr-only">Paste a pilot report in plain English</label>
-    <textarea id="text" name="text" rows="5" class="big-input" placeholder="Over New Delhi at 8000 feet, moderate turbulence with light icing in broken clouds..." required></textarea>
-    <div style="margin-top:12px;">
-      <button class="btn" type="submit">Prepare PIREP </button>
+    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
+      <div>
+        <label for="problem_type" style="color:#a9f5ba;">Type of problem</label>
+        <input id="problem_type" name="problem_type" type="text" class="big-input" placeholder="e.g., Moderate turbulence, light icing" />
+      </div>
+      <div>
+        <label for="location" style="color:#a9f5ba;">Location (ICAO or place)</label>
+        <input id="location" name="location" type="text" class="big-input" placeholder="e.g., VABB or 20NM NE of VABB" />
+      </div>
+      <div>
+        <label for="aircraft_model" style="color:#a9f5ba;">Aircraft model</label>
+        <input id="aircraft_model" name="aircraft_model" type="text" class="big-input" placeholder="e.g., A320, B738, C172" />
+      </div>
+      <div>
+        <label for="altitude" style="color:#a9f5ba;">Altitude (ft)</label>
+        <input id="altitude" name="altitude" type="text" class="big-input" placeholder="e.g., 8000" />
+      </div>
     </div>
+
+    <div style="margin-top:12px;">
+      <label for="text" style="color:#a9f5ba;">Optional: Free-text description</label>
+      <textarea id="text" name="text" rows="4" class="big-input" placeholder="Over New Delhi at 8000 feet, moderate turbulence with light icing in broken clouds..."></textarea>
+    </div>
+
+    <div style="margin-top:12px; display:flex; gap:10px;">
+      <button class="btn" type="submit">Prepare PIREP</button>
+    </div>
+
     {% if error %}
       <p class="error">{{ error }}</p>
     {% endif %}

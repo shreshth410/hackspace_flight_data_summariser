@@ -2,7 +2,7 @@ import google.generativeai as genai
 import os
 from datetime import datetime
 
-def convert_english_to_pirep(user_text: str) -> str:
+def convert_english_to_pirep(user_text: str, fields: dict | None = None) -> str:
     """
     Convert a free-text pilot report into a single-line standardized PIREP string using Gemini.
 
@@ -17,15 +17,31 @@ def convert_english_to_pirep(user_text: str) -> str:
 
     current_time = datetime.utcnow().strftime("%H%MZ")
 
+    # Prepare a structured-fields snippet to bias/assist the model.
+    fields = fields or {}
+    problem_type = (fields.get('problem_type') or '').strip()
+    location = (fields.get('location') or '').strip()
+    aircraft_model = (fields.get('aircraft_model') or '').strip()
+    altitude = (fields.get('altitude') or '').strip()
+
     prompt = f'''
     You are an expert in aviation communications. Translate the provided plain-English pilot report
-    into a single-line standardized PIREP string. Use only the information inferable from the text.
-    Omit fields that cannot be inferred.
+    into a single-line standardized PIREP string.
+
+    You are also given STRUCTURED FIELDS captured from a form. When a field is present there,
+    prefer it over any conflicting interpretation from free text. If a field is blank, you may
+    infer from the free text. Omit segments that cannot be inferred at all.
 
     Provided Text:
     """
     {user_text}
     """
+
+    Structured Fields (prefer these when present):
+      - Problem Type: {problem_type}
+      - Location (ICAO or relative): {location}
+      - Aircraft Model: {aircraft_model}
+      - Altitude: {altitude}
 
     Current UTC time: {current_time}
 

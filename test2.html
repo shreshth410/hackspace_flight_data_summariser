@@ -1,0 +1,120 @@
+{% extends 'base.html' %}
+{% block title %}Weather Summary{% endblock %}
+{% block content %}
+  <header class="page-header">
+    <a href="/icao" class="back-link">← Back</a>
+    <h1>Weather Summary</h1>
+    <div class="codes">For: {{ ", ".join(icao_codes) }}</div>
+  </header>
+  <style>
+    /* Split layout: left text, right map */
+    .split-wrap{ display:grid; grid-template-columns: 1fr 1fr; gap:14px; align-items:start; }
+    @media (max-width: 900px){ .split-wrap{ grid-template-columns: 1fr; } }
+    #map{ width:100%; min-height:520px; border-radius:18px; border:1px solid rgba(57,255,20,0.18); overflow:hidden; }
+    .leaflet-container{ background:#000; }
+  </style>
+
+  <div class="split-wrap">
+    <div>
+      <div id="summary-output" class="card rich">
+        {{ summary_html | safe }}
+      </div>
+      <div id="icao-data" data-icaos="{{ ",".join(icao_codes) }}" style="display:none;"></div>
+    </div>
+    <div>
+      <div id="map"></div>
+    </div>
+  </div>
+
+  <script>
+    (function() {
+      const output = document.getElementById('summary-output');
+      if (!output) return;
+
+      // ... (The script for handling the summary text output remains unchanged) ...
+
+    })();
+  </script>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="https://cdn.jsdelivr.net/npm/leaflet.geodesic"></script>
+  
+  <script>
+    (async function(){
+      const mapEl = document.getElementById('map');
+      if (!mapEl) return;
+      
+      // Initialize the map with a dark theme
+      const map = L.map('map', { zoomControl: true });
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        attribution: '&copy; OpenStreetMap &copy; CartoDB',
+        subdomains: 'abcd',
+        maxZoom: 19
+      }).addTo(map);
+
+      // Get ICAO codes from the hidden div
+      const dataEl = document.getElementById('icao-data');
+      const icaos = ((dataEl && dataEl.dataset && dataEl.dataset.icaos) ? dataEl.dataset.icaos : '')
+        .split(',')
+        .map(s => s.trim().toUpperCase())
+        .filter(s => !!s);
+        
+      try {
+        // Fetch coordinates from the server
+        const res = await fetch('/api/coords', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ icao_codes: icaos })
+        });
+        const data = await res.json();
+        
+        // Process the response into a clean 'points' array
+        const points = (data.coords || [])
+          .filter(p => typeof p.lat === 'number' && typeof p.lon === 'number')
+          .map(p => ({
+            icao: p.icao || '',
+            name: p.name || '',
+            coords: [p.lat, p.lon]
+          }));
+          
+        if (points.length < 2) {
+          map.setView([20.5937, 78.9629], 4); // Center on India if not enough points
+          return;
+        }
+        
+        // Create a layer group to hold all map elements for easy clearing
+        const routeLayer = L.layerGroup().addTo(map);
+        
+        // --- NEW INTEGRATED DRAWING LOGIC STARTS HERE ---
+        
+        const departure = points[0];
+        const destination = points[points.length - 1]; // Use the last point as destination
+
+        // Add a standard marker for the departure airport
+        L.marker(departure.coords).addTo(routeLayer)
+          .bindPopup(`<b>Departure:</b> ${departure.icao}`);
+        
+        // Add a standard marker for the destination airport
+        L.marker(destination.coords).addTo(routeLayer)
+          .bindPopup(`<b>Destination:</b> ${destination.icao}`);
+        
+        // Create and add the simple blue geodesic (curved) line
+        const geodesicLine = new L.Geodesic([departure.coords, destination.coords], {
+          weight: 3,
+          opacity: 1,
+          color: '#3498db', // A nice blue color for the route
+        }).addTo(routeLayer);
+        
+        // Fit the map to show the entire route with some padding
+        map.fitBounds(geodesicLine.getBounds(), { padding: [50, 50] });
+        
+        // --- NEW INTEGRATED DRAWING LOGIC ENDS HERE ---
+        
+      } catch (error) {
+        console.error('Map error:', error);
+        map.setView([20.5937, 78.9629], 4); // Fallback view on error
+      }
+    })();
+  </script>
+{% endblock %}

@@ -58,41 +58,13 @@ def pirep_get():
 
 @app.post("/pirep")
 def pirep_post():
-    # Gather structured fields
-    problem_type = (request.form.get("problem_type", "") or "").strip()
-    location = (request.form.get("location", "") or "").strip()
-    aircraft_model = (request.form.get("aircraft_model", "") or "").strip()
-    altitude = (request.form.get("altitude", "") or "").strip()
-    text = (request.form.get("text", "") or "").strip()
-
-    # If no free text provided, synthesize a plain-English line from fields
+    text = request.form.get("text", "").strip()
     if not text:
-        parts = []
-        if aircraft_model:
-            parts.append(aircraft_model)
-        else:
-            parts.append("Aircraft")
-        if altitude:
-            # ensure 'feet' suffix
-            alt_norm = altitude if any(x in altitude.lower() for x in ["ft", "feet"]) else f"{altitude} feet"
-            parts.append(f"at {alt_norm}")
-        if location:
-            parts.append(f"near {location}")
-        if problem_type:
-            parts.append(f"reporting {problem_type}")
-        text = ", ".join(parts).strip(", ")
-
-    if not text:
-        return render_template("pirep_input.html", error="Please fill at least one field or the description."), 400
+        return render_template("pirep_input.html", error="Please paste a report in plain English."), 400
     if convert_english_to_pirep is None:
         return render_template("pirep.html", pirep_text=None, error="PIREP conversion module not available."), 500
     try:
-        pirep_line = convert_english_to_pirep(text, fields={
-            'problem_type': problem_type,
-            'location': location,
-            'aircraft_model': aircraft_model,
-            'altitude': altitude,
-        })
+        pirep_line = convert_english_to_pirep(text)
     except Exception as e:
         return render_template("pirep_input.html", error=f"Error converting to PIREP: {e}"), 500
     return render_template("pirep.html", pirep_text=pirep_line, error=None)
@@ -382,9 +354,6 @@ def summarize_weather(weather_data, pilot_profile, stations):
         - No preamble or explanations outside these sections.
         - Do not include the raw data itself in your output. Decode it to plain language.
         - When showing Per-Airport Conditions, make it so that every individual feature is shown in a new line, along with a bullet point.
-        - Make the summaries be 1-2 sentences only. Include any values that are of value to the pilot. 
-        - Also, In the recommendations section, I want you to summarise the journey into various legs. If there are two airports, I want to see the weather report for the journey between them
-        - In case there are multiple airports, then i want to see the weather report from airport 1 to 2, then 2 to 3, then 3 to 4 and so on.
 
         AIRPORT DIRECTORY (ICAO -> Name):
         {airport_directory}
@@ -455,6 +424,61 @@ def summarize_weather(weather_data, pilot_profile, stations):
         return normalize_sections(raw_html)
     except Exception as e:
         return f"Error generating summary: {str(e)}"
+
+    import requests
+from flask import Flask, request, jsonify
+
+# ... (your existing Flask app setup) ...
+# app = Flask(__name__)
+
+@app.route('/api/coords', methods=['POST'])
+def get_coordinates():
+    """
+    API endpoint specifically for fetching coordinates for given ICAO codes.
+    """
+    try:
+        # Get the list of ICAO codes from the incoming JSON request
+        data = request.get_json()
+        icao_codes = data.get('icao_codes', [])
+
+        if not icao_codes:
+            return jsonify({"error": "No ICAO codes provided"}), 400
+
+        coordinates = []
+        # Use a session for potential performance improvement with multiple requests
+        session = requests.Session()
+
+        for code in icao_codes:
+            # The METAR API endpoint is a good source for lat/lon data
+            api_url = f"https://aviationweather.gov/api/data/metar?ids={code}&format=json"
+            
+            try:
+                response = session.get(api_url, timeout=10)
+                response.raise_for_status()  # Raises an error for bad responses (4xx or 5xx)
+                metar_data = response.json()
+
+                # Check if the response contains data and extract coordinates
+                if metar_data and isinstance(metar_data, list) and len(metar_data) > 0:
+                    airport_info = metar_data[0]
+                    if 'lat' in airport_info and 'lon' in airport_info:
+                        coordinates.append({
+                            "icao": airport_info.get('icaoId', code),
+                            "name": airport_info.get('name', 'N/A'),
+                            "lat": airport_info['lat'],
+                            "lon": airport_info['lon']
+                        })
+            except requests.exceptions.RequestException as e:
+                # Log the error but continue, so one bad code doesn't break all
+                print(f"Warning: Could not fetch data for ICAO {code}. Error: {e}")
+
+        # Return the collected coordinates in a JSON format
+        return jsonify({"coords": coordinates})
+
+    except Exception as e:
+        print(f"An unexpected error occurred in /api/coords: {e}")
+        return jsonify({"error": "An internal server error occurred."}), 500
+
+# ... (the rest of your Flask app code, like app.run()) ...
 
 @app.route('/summarize', methods=['POST'])
 def handle_summarize():
