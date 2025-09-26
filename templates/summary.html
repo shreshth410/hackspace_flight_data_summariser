@@ -12,6 +12,7 @@
     @media (max-width: 900px){ .split-wrap{ grid-template-columns: 1fr; } }
     #map{ width:100%; min-height:520px; border-radius:18px; border:1px solid rgba(57,255,20,0.18); overflow:hidden; }
     .leaflet-container{ background:#000; }
+    .leg-label{ color:#39ff14; font-weight:600; text-shadow:0 0 6px rgba(57,255,20,0.6); transform: translate(-50%, -50%); white-space:nowrap; }
   </style>
 
   <div class="split-wrap">
@@ -258,6 +259,33 @@
           }).addTo(map);
           marker.bindPopup(`<strong>${label}</strong>`);
         });
+
+        // Add leg number labels at midpoints of each leg
+        for (let i=0; i<latlngs.length-1; i++){
+          const A = latlngs[i];
+          const B = latlngs[i+1];
+          // compute great-circle midpoint using spherical interpolation (f=0.5)
+          (function(){
+            function toRad(x){ return x * Math.PI / 180; }
+            function toDeg(x){ return x * 180 / Math.PI; }
+            const lat1 = toRad(A[0]), lon1 = toRad(A[1]);
+            const lat2 = toRad(B[0]), lon2 = toRad(B[1]);
+            const d = 2 * Math.asin(Math.sqrt(Math.sin((lat2-lat1)/2)**2 + Math.cos(lat1)*Math.cos(lat2)*Math.sin((lon2-lon1)/2)**2));
+            let mid = A;
+            if (isFinite(d) && d > 0){
+              const f = 0.5;
+              const Acoef = Math.sin((1-f)*d) / Math.sin(d);
+              const Bcoef = Math.sin(f*d) / Math.sin(d);
+              const x = Acoef*Math.cos(lat1)*Math.cos(lon1) + Bcoef*Math.cos(lat2)*Math.cos(lon2);
+              const y = Acoef*Math.cos(lat1)*Math.sin(lon1) + Bcoef*Math.cos(lat2)*Math.sin(lon2);
+              const z = Acoef*Math.sin(lat1) + Bcoef*Math.sin(lat2);
+              const lat = Math.atan2(z, Math.sqrt(x*x + y*y));
+              const lon = Math.atan2(y, x);
+              mid = [toDeg(lat), toDeg(lon)];
+            }
+            L.marker(mid, { icon: L.divIcon({ className: 'leg-label', html: `Leg ${i+1}`, iconSize:[0,0] }) }).addTo(map);
+          })();
+        }
 
         map.fitBounds(L.latLngBounds(latlngs), { padding: [20,20] });
       } catch (e) {

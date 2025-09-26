@@ -30,10 +30,11 @@ body{
   font-weight:800;
   letter-spacing:0.5px;
   text-align:center;
-  margin:0 0 28px;
+  margin:0 0 2px;
   background:linear-gradient(90deg,var(--accent),var(--accent-2));
   -webkit-background-clip:text; background-clip:text;
   color:transparent;
+  font-size: 2rem;
 }
 
 .card{
